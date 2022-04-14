@@ -3,6 +3,13 @@ const app = express();
 const bodyParser = require("body-parser");
 const date = require(__dirname + "/date.js");
 const mongoose = require("mongoose");
+const _ = require("lodash");
+
+app.use(bodyParser.urlencoded({
+  extended: true
+}));
+app.use(express.static("public"))
+app.set("view engine", "ejs");
 
 // starting a mongoose connection.
 mongoose.connect("mongodb://localhost:27017/toDoListDB");
@@ -31,17 +38,22 @@ const item3 = new itemModel({
 // inserting the documents in the model.
 const defaultItems = [item1, item2, item3];
 
+// parameters for the custom List.
 
-app.use(bodyParser.urlencoded({
-  extended: true
-}));
-app.use(express.static("public"))
-app.set("view engine", "ejs");
+// schema
+const listSchema = new mongoose.Schema({
+  name: String,
+  items: [itemSchema]
+})
+
+// model.
+const listModel = mongoose.model("list", listSchema );
 
 
-// home route, containing the code to display the contents present in the database.
+
+
+// home route, containing the code to display the contents present in the database. *****************************************************
 app.get("/", function (req, res) {
-  let day = date.getDate(); // for creating a heading based on today's date.
 
   // to read the data from the database.
   itemModel.find({}, (err, data) => {
@@ -54,19 +66,51 @@ app.get("/", function (req, res) {
       res.redirect("/") // after adding the default, it will to the else part
     } else  // render the list.ejs page with the heading of date and data of db.
       res.render("list", {
-        heading: day,
+        heading: "Today",
         newListItems: data
       })
   })
+
 })
 
-// work route for work list. (not available currently)
-app.get("/work", (req, res) => {
-  let heading = "Work";
-  res.render("list", {
-    heading: heading,
-    newListItems: workItems
-  })
+
+
+// ***************************dynamic routes********************
+
+app.get('/:customListName', (req,res)=>{
+const customListName =  _.capitalize(req.params.customListName);
+if(customListName === "About"){
+  res.render("about");
+}
+else{
+
+  listModel.findOne({name: customListName}, (err,data)=>{
+    if(err) console.log("there is an error which is" + err);
+    else{
+      if(!data){
+        // make the list doc
+        var list1 = new listModel({
+          name: customListName,
+          items: [item1,item2,item3]
+        })
+        list1.save();
+        res.redirect("/" + customListName)
+      }
+  
+      else{
+  
+        res.render("list", {
+          heading: customListName,
+          newListItems: data.items
+  
+          // **Note: after rendering any route, I don't know why its console.loging the favicon.ico in the terminal.
+        })
+       
+      }
+    }
+  });
+}
+
 })
 
 // posting through home route. -> for addition to the list by adding to the database.
@@ -74,35 +118,73 @@ app.get("/work", (req, res) => {
 app.post("/", (req, res) => {
   // store the item to store in var
   let item_var = req.body.item;
-  // in the ejs file, req.body.list is set according to from where it is being called.
-  if (req.body.list === "Work") {
-    workItems.push(item_var);
-    res.redirect("/work");
-  } else { // else create a new doc with item.
-    var itemDoc = new itemModel({
-      name: item_var
-    })
-    itemDoc.save();    // add to db.
-    res.redirect("/")  // redirect to the home as there it will display the updated db data.
+  let customListName = req.body.list;
+ 
+  var newItem = new itemModel({
+    name: item_var
+  });
+
+  if(customListName === 'Today'){
+    newItem.save();
+    res.redirect("/")
   }
-})
+else{
+  listModel.findOne({name: customListName},  (err,data)=>{
+    data.items.push(newItem);
+    data.save();
+    res.redirect("/" + customListName);
+  });
+
+}
+
+});
+
+
 
 // post for deletion 
 app.post("/delete", (req, res) => {
+
   let DeleItemId = req.body.checkbox;
+  let listName = req.body.listName;
 
-  itemModel.deleteOne({
-    _id: DeleItemId
-  }, (err) => {
-    if (err) console.log(err);
-    else console.log("Successfully deleted")
-  });
-  res.redirect("/")
+  if(listName === "Today"){
+    itemModel.deleteOne({
+      _id: DeleItemId
+    }, (err) => {
+      if (err) console.log(err);
+      else console.log("Successfully deleted")
+    });
+    res.redirect("/")
+  }
+// deletion of items other than the today home list.
+  else{
+
+    // ***************************** using js splice in loops ****************************
+    //   listModel.findOne({name: listName}, (err,data)=>{
+    //   if(!err){
+    //     console.log("id: "+ DeleItemId);
+    //     console.log(data.items[0]._id);
+    //     for(let i=0; i<data.items.length ; i++){
+    //       if(data.items[i]._id == DeleItemId){
+    //         data.items.splice(i,1);
+    //       }
+    //     }
+    //     data.save();
+    //     res.redirect("/" + listName)
+    //   }
+    // });
+
+    // ********** using the $pull operator*****************
+    listModel.findOneAndUpdate({name: listName} , {$pull: {items: {_id: DeleItemId}}}, (err, foundList)=>{  // this line deleted the items from the array
+
+      if(!err){
+        res.redirect("/" + listName);
+      }
+    });
+  }
+
 })
 
-app.get("/about", (req, res) => {
-  res.render("about");
-})
 
 app.listen("3000", () => {
   console.log("Server is running and up")
